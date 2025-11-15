@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Env
+.env
+
+# Dati sensibili / runtime
+downloaded_pdfs/
+pdf_downloads/
+analysis_results/
+*.pdf
+*.PDF
+cookies.txt
+session_cookies.json
+log_download.txt
+addestramento/
+pages-to-jpg/
+
+# Cartelle generate dal backend
+
