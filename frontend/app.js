@@ -1,7 +1,8 @@
 ﻿// app.js - Patient portal per Medical AI backend
 
 // Backend URL: can be overridden via window.__BACKEND_URL__ (set in config.js or inline script)
-const backendUrl = window.__BACKEND_URL__ || "http://127.0.0.1:8000";
+// Production backend on Railway
+const backendUrl = window.__BACKEND_URL__ || "https://medicalaibackend-production.up.railway.app";
 const FSE_URL =
   "https://fascicolosanitario.sanita.finanze.it/FseInsAssistitoWeb/pages/includes/documentiHome.jsf?id=1";
 
