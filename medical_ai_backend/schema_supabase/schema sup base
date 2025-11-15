@@ -1,0 +1,168 @@
+-- ===========================================
+--  Medical AI ‑ Supabase schema bootstrap
+-- ===========================================
+
+create extension if not exists "uuid-ossp";
+
+-- 1. Anagrafica paziente autorizzato
+create table if not exists patients (
+    patient_id             text primary key,
+    nome                   text,
+    codice_fiscale         text unique,
+    data_nascita           date,
+    email                  text,
+    telefono               text,
+    note                   text,
+    created_at             timestamptz default now(),
+    updated_at             timestamptz default now()
+);
+
+create index if not exists idx_patients_email on patients (lower(email));
+
+-- 2. Credenziali + domanda di sicurezza
+create table if not exists patient_credentials (
+    patient_id             text primary key references patients (patient_id) on delete cascade,
+    email                  text not null unique,
+    password_hash          text not null,
+    password_salt          text not null,
+    security_question      text not null,
+    security_answer_hash   text not null,
+    security_answer_salt   text not null,
+    created_at             timestamptz default now(),
+    updated_at             timestamptz default now()
+);
+
+-- 3. Sessioni attive (equivalente di _sessions.json)
+create table if not exists sessions (
+    token                  text primary key,
+    patient_id             text not null references patients (patient_id) on delete cascade,
+    created_at             timestamptz not null default now(),
+    last_seen              timestamptz not null default now(),
+    expires_at             timestamptz not null
+);
+
+create index if not exists idx_sessions_patient on sessions (patient_id);
+create index if not exists idx_sessions_expires on sessions (expires_at);
+
+-- 4. Password reset (token + metodo)
+create table if not exists password_resets (
+    token                  text primary key,
+    patient_id             text not null references patients (patient_id) on delete cascade,
+    method                 text not null default 'email',
+    created_at             timestamptz not null default now(),
+    expires_at             timestamptz not null,
+    consumed_at            timestamptz
+);
+
+create index if not exists idx_password_resets_patient on password_resets (patient_id);
+create index if not exists idx_password_resets_expires on password_resets (expires_at);
+
+-- 5. Pazienti in attesa di autorizzazione (_pending.json)
+create table if not exists pending_patients (
+    patient_id             text primary key,
+    nome                   text,
+    codice_fiscale         text,
+    data_nascita           date,
+    email                  text,
+    last_seen              timestamptz default now(),
+    metadata               jsonb default '{}'::jsonb
+);
+
+-- 6. Inviti (_invites.json)
+create table if not exists invites (
+    id                     uuid primary key default uuid_generate_v4(),
+    patient_id             text not null references patients (patient_id) on delete cascade,
+    token                  text not null unique,
+    created_by             text,
+    note                   text,
+    created_at             timestamptz default now(),
+    expires_at             timestamptz,
+    consumed_at            timestamptz
+);
+
+create index if not exists idx_invites_patient on invites (patient_id);
+create index if not exists idx_invites_token on invites (token);
+
+-- 7. Richieste di accesso (_access_requests.json)
+create type access_request_status as enum ('pending', 'approved', 'rejected')
+    -- if already exists, comment the create type above (Supabase SQL editor lo segnala).
+
+create table if not exists access_requests (
+    id                     uuid primary key default uuid_generate_v4(),
+    patient_id             text not null references patients (patient_id) on delete cascade,
+    requester              text not null,
+    contact                text,
+    message                text,
+    status                 access_request_status not null default 'pending',
+    created_at             timestamptz default now(),
+    updated_at             timestamptz default now(),
+    note                   text
+);
+
+create index if not exists idx_access_requests_patient on access_requests (patient_id);
+create index if not exists idx_access_requests_status on access_requests (status);
+
+-- 8. Metadati documenti (collegati a Storage)
+create table if not exists documents (
+    id                     uuid primary key default uuid_generate_v4(),
+    patient_id             text not null references patients (patient_id) on delete cascade,
+    original_filename      text not null,
+    stored_path            text not null,
+    specialty              text,
+    tipologia              text,
+    data_documento         date,
+    summary                text,
+    created_at             timestamptz default now(),
+    updated_at             timestamptz default now(),
+    metadata               jsonb default '{}'::jsonb
+);
+
+create index if not exists idx_documents_patient on documents (patient_id);
+create index if not exists idx_documents_specialty on documents (specialty);
+create index if not exists idx_documents_path on documents (stored_path);
+
+-- 9. Risultati analisi (facoltativo: puoi usare la stessa tabella documents.metadata)
+create table if not exists analysis_results (
+    id                     uuid primary key default uuid_generate_v4(),
+    patient_id             text not null references patients (patient_id) on delete cascade,
+    document_id            uuid references documents (id) on delete cascade,
+    json_path              text not null,
+    created_at             timestamptz default now(),
+    payload                jsonb not null
+);
+
+create index if not exists idx_analysis_results_patient on analysis_results (patient_id);
+create index if not exists idx_analysis_results_doc on analysis_results (document_id);
+
+-- 10. Log generici / audit opzionali
+create table if not exists audit_log (
+    id                     bigserial primary key,
+    patient_id             text,
+    actor                  text,
+    action                 text not null,
+    payload                jsonb default '{}'::jsonb,
+    created_at             timestamptz default now()
+);
+
+-- trigger per aggiornare updated_at
+create or replace function set_updated_at()
+returns trigger as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$ language plpgsql;
+
+drop trigger if exists set_updated_at_documents on documents;
+create trigger set_updated_at_documents before update on documents
+for each row execute procedure set_updated_at();
+
+drop trigger if exists set_updated_at_patients on patients;
+create trigger set_updated_at_patients before update on patients
+for each row execute procedure set_updated_at();
+
+drop trigger if exists set_updated_at_access_requests on access_requests;
+create trigger set_updated_at_access_requests before update on access_requests
+for each row execute procedure set_updated_at();
+
+-- Per sicurezza: grant lettura/scrittura solo agli user autenticati (Supabase gestisce RLS, da configurare in seguito).

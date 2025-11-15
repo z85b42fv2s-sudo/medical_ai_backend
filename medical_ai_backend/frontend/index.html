@@ -1,0 +1,408 @@
+﻿<!DOCTYPE html>
+<html lang="it">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Medicalyze | Patient Portal</title>
+    <link rel="stylesheet" href="style.css" />
+    <script defer src="config.js"></script>
+    <script defer src="app.js"></script>
+  </head>
+  <body>
+    <header class="page-header">
+      <div>
+        <h1>Medicalyze - Gestione Documenti Clinici</h1>
+        <p>
+          Accedi al tuo profilo, consulta la scheda paziente, interroga
+          l'assistente AI e gestisci le condivisioni in sicurezza.
+        </p>
+      </div>
+      <div id="statusBar" class="status status-info">Sistema pronto.</div>
+    </header>
+
+    <main>
+      <section id="loginSection" class="card">
+        <h2>Accesso paziente</h2>
+        <p class="muted">
+          Inserisci il tuo identificativo (codice fiscale o ID generato dal sistema) per caricare la scheda personale.
+          Se hai ricevuto un token d'invito puoi reclamarlo qui sotto.
+        </p>
+        <div class="form-grid">
+          <label class="field">
+            <span>ID paziente (fornito dal centro medico)</span>
+            <input id="patientIdInput" type="text" autocomplete="off" />
+          </label>
+          <label class="field">
+            <span>Email di accesso</span>
+            <input id="emailInput" type="email" autocomplete="off" />
+          </label>
+          <label class="field">
+            <span>Password</span>
+            <input id="passwordInput" type="password" autocomplete="off" />
+          </label>
+          <label class="field">
+            <span>Token invito (opzionale)</span>
+            <input id="inviteTokenInput" type="text" autocomplete="off" />
+          </label>
+        </div>
+        <div class="actions wrap">
+          <button id="loginBtn" class="primary">Accedi</button>
+          <button id="registerBtn" class="ghost">Registra account</button>
+          <button id="claimInviteBtn" class="ghost">Reclama invito</button>
+          <button id="openSignupBtn" class="ghost">Richiedi un nuovo accesso</button>
+        </div>
+        <div id="loginStatus" class="small muted"></div>
+        <p class="small muted">
+          <button id="forgotPasswordBtn" class="link-button" type="button">Hai dimenticato la password?</button>
+        </p>
+      </section>
+
+      <section id="appShell" class="hidden">
+        <header class="app-toolbar card">
+          <div>
+            <h2 id="patientName">Profilo paziente</h2>
+            <p id="patientDetails" class="muted"></p>
+          </div>
+          <div class="actions">
+            <button id="refreshProfileBtn" class="ghost">Aggiorna profilo</button>
+            <button id="logoutBtn" class="danger">Esci</button>
+          </div>
+        </header>
+
+        <nav class="app-nav card">
+          <button class="nav-btn active" data-tab="documentsTab">Documenti</button>
+          <button class="nav-btn" data-tab="indexedTab">Documenti indicizzati</button>
+          <button class="nav-btn" data-tab="specialtyTab">Libreria per specialità</button>
+          <button class="nav-btn" data-tab="profileTab">Profilo &amp; AI</button>
+          <button class="nav-btn" data-tab="settingsTab">Impostazioni</button>
+        </nav>
+
+        <section id="documentsTab" class="tab-panel">
+          <div class="grid two-columns">
+            <article class="card action-card">
+              <h3>Scarica dal Fascicolo Sanitario</h3>
+              <p class="muted">
+                Accedi al portale ufficiale, effettua l’autenticazione SPID e raggiungi la sezione documenti. Una volta aperti i referti, torna qui per avviare l’estrazione automatica.
+              </p>
+              <div class="actions wrap">
+                <a
+                  id="openFseLink"
+                  class="primary button-link"
+                  href="https://fascicolosanitario.sanita.finanze.it/FseInsAssistitoWeb/pages/includes/documentiHome.jsf?id=1"
+                  target="_blank"
+                  rel="noopener"
+                >
+                  Apri Fascicolo Sanitario
+                </a>
+                <button id="startFseDownloadBtn" class="ghost">Avvia download automatico</button>
+                <button id="continueFseDownloadBtn" class="ghost hidden">Continua download</button>
+              </div>
+              <p id="fseDownloadHint" class="muted small hidden">
+                Completa l'autenticazione SPID e apri la pagina con l'elenco dei referti (senza aprire i PDF). Quando vedi tutti i documenti elencati, torna qui e premi "Continua download".
+              </p>
+            </article>
+
+            <article class="card action-card">
+              <h3>Carica PDF dal dispositivo</h3>
+              <p class="muted">
+                Seleziona uno o più referti salvati sul tuo computer o smartphone: verranno aggiunti all’archivio e saranno pronti per l’analisi automatica.
+              </p>
+              <label class="field">
+                <span>Scegli i file PDF</span>
+                <input id="localPdfInput" type="file" accept="application/pdf" multiple />
+              </label>
+              <div class="actions">
+                <button id="uploadLocalPdfBtn" class="primary">Carica PDF locali</button>
+              </div>
+            </article>
+          </div>
+
+          <article class="card action-card admin-card">
+            <h3>Importa da percorso o URL (operatori)</h3>
+            <p class="muted">
+              Copia un percorso locale o un indirizzo web per scaricare automaticamente i PDF. Successivamente puoi eseguire l’analisi in batch dalla stessa schermata.
+            </p>
+            <div class="form-grid">
+              <label class="field">
+                <span>Fonte download</span>
+                <input id="downloadSourceInput" type="text" placeholder="es. C:\cartella\pdf oppure https://..." />
+              </label>
+              <label class="field">
+                <span>Cartella da analizzare</span>
+                <input id="analyzeFolderInput" type="text" value="downloaded_pdfs" />
+              </label>
+            </div>
+            <div class="form-grid">
+              <label class="field checkbox">
+                <input id="autoAuthorizeCheckbox" type="checkbox" checked />
+                <span>Autorizza automaticamente nuovi pazienti</span>
+              </label>
+              <label class="field checkbox">
+                <input id="ocrCheckbox" type="checkbox" checked />
+                <span>Abilita OCR (consigliato per scansioni)</span>
+              </label>
+            </div>
+            <div class="actions wrap">
+              <button id="downloadBtn" class="primary">Avvia download</button>
+              <button id="analyzeBtn" class="ghost">Analizza PDF</button>
+              <button id="pendingPatientsBtn" class="ghost">Mostra pazienti in attesa</button>
+            </div>
+            <div id="pendingPatientsList" class="list muted small hidden"></div>
+          </article>
+
+          <article class="card">
+            <div class="card-header">
+              <h3>Archivio file scaricati</h3>
+              <div class="actions wrap">
+                <button id="listBtn" class="ghost">Mostra elenco</button>
+                <button id="refreshDownloadListBtn" class="ghost">Aggiorna elenco</button>
+              </div>
+            </div>
+            <div id="operationsOutput" class="operations-output muted small">
+              Nessun file elencato. Usa i pulsanti sopra per visualizzare o aggiornare l’archivio.
+            </div>
+          </article>
+        </section>
+
+        <section id="indexedTab" class="tab-panel hidden">
+          <article class="card" id="documentsCard">
+            <div class="card-header">
+              <h3>Documenti indicizzati</h3>
+              <div class="actions wrap">
+                <input id="documentSearchInput" type="search" placeholder="Filtra per parola chiave..." />
+                <button id="downloadAllDocsBtn" class="ghost">Scarica tutti i PDF</button>
+                <button id="refreshDocsBtn" class="ghost">Aggiorna elenco</button>
+              </div>
+            </div>
+            <div id="documentsContainer" class="table-wrapper muted">
+              Nessun documento caricato.
+            </div>
+          </article>
+        </section>
+
+        <section id="specialtyTab" class="tab-panel hidden">
+          <article class="card" id="specialtyCard">
+            <div class="card-header">
+              <h3>Libreria documenti per specialità</h3>
+              <span class="muted small">Visualizza i referti suddivisi per area clinica</span>
+            </div>
+            <div id="specialtyContainer" class="specialty-grid muted small">
+              Nessun documento raggruppato per specialità.
+            </div>
+          </article>
+        </section>
+
+        <section id="profileTab" class="tab-panel hidden">
+          <div class="grid two-columns">
+            <article class="card" id="profileCard">
+              <h3>Riepilogo clinico</h3>
+              <div id="aggregatesContainer" class="aggregates collapsible"></div>
+              <div class="collapsible-actions">
+                <button id="toggleAggregatesBtn" class="ghost small hidden">Mostra tutto</button>
+              </div>
+            </article>
+
+            <article class="card note-card" id="analyzeReminderCard">
+              <h3>Analizza i PDF prima di interrogare l'AI</h3>
+              <p class="muted small">
+                Se hai appena caricato o scaricato nuovi referti, avvia l'analisi per aggiornarli nella scheda
+                paziente. Solo dopo l'analisi i documenti saranno compresi dall'assistente AI.
+              </p>
+              <div class="options muted small">
+                <label class="field checkbox">
+                  <input id="overwriteAnalysisCheckbox" type="checkbox" checked />
+                  <span>Sovrascrivi le analisi esistenti</span>
+                </label>
+                <label class="field checkbox">
+                  <input id="visionAnalysisCheckbox" type="checkbox" />
+                  <span>Usa analisi Vision (ignora OCR locale)</span>
+                </label>
+              </div>
+              <div class="actions wrap">
+                <button id="analyzeProfileBtn" class="primary">Analizza documenti caricati</button>
+                <a class="ghost" href="#documentsCard">Vai alla sezione documenti</a>
+              </div>
+            </article>
+
+            <article class="card" id="chatCard">
+              <h3>Domande all'assistente AI</h3>
+              <label class="field stacked">
+                <span>Scrivi la tua domanda</span>
+                <textarea
+                  id="questionInput"
+                  rows="5"
+                  placeholder="Esempio: Quali farmaci sono stati prescritti nell'ultimo anno?"
+                ></textarea>
+              </label>
+              <label class="field checkbox small">
+                <input id="askVisionCheckbox" type="checkbox" />
+                <span>Prima della risposta rielabora i PDF con Vision</span>
+              </label>
+              <div class="actions">
+                <button id="askBtn" class="primary">Chiedi all'AI</button>
+              </div>
+              <div id="chatOutput" class="chat-output muted small"></div>
+            </article>
+          </div>
+
+          <div class="grid two-columns">
+            <article class="card" id="invitesCard">
+              <h3>Condivisioni &amp; inviti</h3>
+              <div class="form-grid">
+                <label class="field">
+                  <span>Validita (ore)</span>
+                  <input id="inviteHoursInput" type="number" min="1" max="336" value="48" />
+                </label>
+                <label class="field">
+                  <span>Nota interna (facoltativa)</span>
+                  <input id="inviteNoteInput" type="text" placeholder="Esempio: Invito per cardiologo" />
+                </label>
+                <label class="field">
+                  <span>Creato da</span>
+                  <input id="inviteCreatorInput" type="text" placeholder="Nome di chi genera l'invito" />
+                </label>
+              </div>
+              <div class="actions">
+                <button id="createInviteBtn" class="primary">Crea nuovo invito</button>
+              </div>
+              <div id="invitesList" class="list muted small"></div>
+            </article>
+
+            <article class="card" id="accessRequestsCard">
+              <h3>Richieste di accesso dai medici</h3>
+              <div id="accessRequestsList" class="list muted small">
+                Nessuna richiesta registrata.
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section id="settingsTab" class="tab-panel hidden">
+          <article class="card" id="settingsCard">
+            <h3>Impostazioni account</h3>
+            <p class="muted small">
+              Puoi cambiare la password e uscire dall'account da questa sezione. Per il recupero tramite email utilizza il link nella schermata di accesso.
+            </p>
+            <div class="form-grid narrow">
+              <label class="field">
+                <span>Password attuale</span>
+                <input id="currentPasswordInput" type="password" autocomplete="off" />
+              </label>
+              <label class="field">
+                <span>Nuova password</span>
+                <input id="newPasswordInput" type="password" autocomplete="off" />
+              </label>
+              <label class="field">
+                <span>Conferma nuova password</span>
+                <input id="confirmPasswordInput" type="password" autocomplete="off" />
+              </label>
+            </div>
+            <div class="actions wrap">
+              <button id="changePasswordBtn" class="primary">Aggiorna password</button>
+              <button id="logoutSettingsBtn" class="danger">Esci dall'account</button>
+            </div>
+            <p id="changePasswordStatus" class="small muted"></p>
+          </article>
+        </section>
+      </section>
+    </main>
+
+    <div id="signupModal" class="modal hidden">
+      <div class="modal-backdrop" id="closeSignupBackdrop"></div>
+      <div class="modal-content">
+        <button class="modal-close" id="closeSignupBtn" type="button" aria-label="Chiudi">×</button>
+        <h2>Richiedi il tuo accesso</h2>
+        <p class="muted small">
+          Compila i dati principali per attivare una cartella personale. Riceverai una password temporanea via email e
+          potrai aggiornarla dopo il primo accesso.
+        </p>
+        <div id="signupPasswordBanner" class="password-banner hidden" role="status" aria-live="polite">
+          <p class="banner-title">Password temporanea generata</p>
+          <code id="signupPasswordValue"></code>
+          <p class="small muted">
+            Copia e conserva questa password: ti servirà per il primo accesso. Riceverai anche un'email con lo stesso
+            riepilogo.
+          </p>
+        </div>
+        <div class="form-grid">
+          <label class="field">
+            <span>ID paziente</span>
+            <input id="signupPatientId" type="text" autocomplete="off" required />
+          </label>
+          <label class="field">
+            <span>Nome e cognome</span>
+            <input id="signupName" type="text" autocomplete="off" />
+          </label>
+          <label class="field">
+            <span>Codice fiscale</span>
+            <input id="signupCf" type="text" autocomplete="off" />
+          </label>
+          <label class="field">
+            <span>Data di nascita</span>
+            <input id="signupDob" type="date" />
+          </label>
+          <label class="field">
+            <span>Email</span>
+            <input id="signupEmail" type="email" autocomplete="off" required />
+          </label>
+          <label class="field">
+            <span>Telefono</span>
+            <input id="signupPhone" type="tel" autocomplete="off" />
+          </label>
+          <label class="field stacked">
+            <span>Domanda di sicurezza</span>
+            <input id="signupSecurityQuestion" type="text" placeholder="Es. Qual è il tuo medico di base?" required />
+          </label>
+          <label class="field stacked">
+            <span>Risposta alla domanda</span>
+            <input id="signupSecurityAnswer" type="text" placeholder="Risposta segreta" required />
+          </label>
+          <label class="field stacked">
+            <span>Note (opzionale)</span>
+            <textarea id="signupNote" rows="3" placeholder="Es. medico di riferimento, urgenze, ecc."></textarea>
+          </label>
+        </div>
+        <div class="actions">
+          <button id="signupSubmitBtn" class="primary">Invia richiesta</button>
+        </div>
+        <p id="signupStatus" class="small muted"></p>
+      </div>
+    </div>
+
+    <div id="passwordResetModal" class="modal hidden">
+      <div class="modal-backdrop" id="closeResetBackdrop"></div>
+      <div class="modal-content">
+        <button class="modal-close" id="closeResetBtn" type="button" aria-label="Chiudi">×</button>
+        <h2>Recupero password</h2>
+        <div id="resetStepInit" class="reset-step">
+          <p class="muted small">
+            Inserisci l'ID paziente o l'email associata all'account. Ti invieremo un'email con le istruzioni e ti chiederemo di confermare la risposta alla domanda di sicurezza.
+          </p>
+          <label class="field">
+            <span>ID paziente o email</span>
+            <input id="resetIdentifierInput" type="text" autocomplete="off" required />
+          </label>
+          <div class="actions">
+            <button id="resetInitBtn" class="primary">Invia richiesta</button>
+          </div>
+        </div>
+        <div id="resetStepVerify" class="reset-step hidden">
+          <p id="resetQuestion" class="muted"></p>
+          <label class="field stacked">
+            <span>Risposta alla domanda</span>
+            <input id="resetAnswerInput" type="text" autocomplete="off" required />
+          </label>
+          <label class="field stacked">
+            <span>Nuova password</span>
+            <input id="resetNewPasswordInput" type="password" autocomplete="off" required />
+          </label>
+          <div class="actions">
+            <button id="resetCompleteBtn" class="primary">Aggiorna password</button>
+          </div>
+        </div>
+        <p id="resetStatus" class="small muted"></p>
+      </div>
+    </div>
+  </body>
+</html>
+
+

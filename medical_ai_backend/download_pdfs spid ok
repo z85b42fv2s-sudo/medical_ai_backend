@@ -1,0 +1,370 @@
+# download_pdfs.py
+import os
+import time
+import shutil
+import re
+import json
+from datetime import datetime
+from urllib.parse import urlparse
+
+# Selenium imports
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.common.exceptions import TimeoutException, NoSuchElementException, WebDriverException
+
+# Try to import webdriver-manager for automatic chromedriver handling
+try:
+    from webdriver_manager.chrome import ChromeDriverManager
+    WEBDRIVER_MANAGER_AVAILABLE = True
+except Exception:
+    WEBDRIVER_MANAGER_AVAILABLE = False
+
+# === CONFIGURAZIONE ===
+DOWNLOAD_DIR = os.path.join(os.getcwd(), "downloaded_pdfs")
+LOG_FILE = os.path.join(os.getcwd(), "log_download.txt")
+COOKIES_FILE = os.path.join(os.getcwd(), "session_cookies.json")
+os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+
+# Contatori
+pdf_principali = 0
+pdf_sottopagine = 0
+pdf_local_principali = 0
+pdf_local_sottocartelle = 0
+
+def scrivi_log(msg):
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    line = f"[{stamp}] {msg}"
+    print(line)
+    with open(LOG_FILE, "a", encoding="utf-8") as f:
+        f.write(line + "\n")
+
+# ---------------- Cookie save / load ----------------
+def save_cookies(driver, path=COOKIES_FILE):
+    try:
+        cookies = driver.get_cookies()
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(cookies, f, ensure_ascii=False, indent=2)
+        scrivi_log(f"🔐 Cookie salvati in: {path}")
+    except Exception as e:
+        scrivi_log(f"⚠️ Errore salvando cookie: {e}")
+
+def load_cookies(driver, url, path=COOKIES_FILE):
+    """
+    Carica cookie salvati per il dominio. Deve esistere il file e il driver deve
+    aver aperto il dominio base prima di aggiungere cookie.
+    """
+    if not os.path.exists(path):
+        scrivi_log("ℹ️ Nessun file cookie trovato.")
+        return False
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            cookies = json.load(f)
+    except Exception as e:
+        scrivi_log(f"⚠️ Errore leggendo cookie file: {e}")
+        return False
+
+    parsed = urlparse(url)
+    domain_base = f"{parsed.scheme}://{parsed.netloc}/"
+    try:
+        driver.get(domain_base)
+        time.sleep(1)
+        added = 0
+        for c in cookies:
+            # Filter fields unsupported by add_cookie in some selenium versions
+            cookie = {}
+            for k in ("name", "value", "path", "domain", "secure", "httpOnly", "expiry"):
+                if k in c:
+                    cookie[k] = c[k]
+            try:
+                driver.add_cookie(cookie)
+                added += 1
+            except Exception as ex:
+                scrivi_log(f"⚠️ Impossibile aggiungere cookie {cookie.get('name')}: {ex}")
+        scrivi_log(f"✅ Cookie caricati ({added}/{len(cookies)}) per dominio {domain_base}")
+        return True
+    except Exception as e:
+        scrivi_log(f"⚠️ Errore caricando cookie nel driver: {e}")
+        return False
+
+# ---------------- Local folder scanning ----------------
+def scan_local_folder(folder, out_dir):
+    """
+    Copia tutti i PDF presenti nella cartella e nelle sottocartelle in out_dir.
+    Tiene conto dei file al primo livello (principali) e nelle sottocartelle.
+    """
+    global pdf_local_principali, pdf_local_sottocartelle
+    scrivi_log(f"📁 Scansione cartella locale: {folder}")
+    if not os.path.isdir(folder):
+        scrivi_log(f"❌ Errore: cartella non trovata - {folder}")
+        return
+
+    os.makedirs(out_dir, exist_ok=True)
+    count = 0
+    for root, _, files in os.walk(folder):
+        for fn in files:
+            if fn.lower().endswith(".pdf"):
+                src = os.path.join(root, fn)
+                dest = os.path.join(out_dir, fn)
+                base, ext = os.path.splitext(fn)
+                i = 1
+                while os.path.exists(dest):
+                    dest = os.path.join(out_dir, f"{base} ({i}){ext}")
+                    i += 1
+                try:
+                    shutil.copy2(src, dest)
+                    count += 1
+                    # distinzione primo livello vs sottocartelle
+                    if os.path.abspath(root) == os.path.abspath(folder):
+                        pdf_local_principali += 1
+                    else:
+                        pdf_local_sottocartelle += 1
+                    scrivi_log(f"✅ Copiato: {dest}")
+                except Exception as e:
+                    scrivi_log(f"⚠️ Errore copiando {src}: {e}")
+    scrivi_log(f"🏁 Scansione locale completata. {count} file PDF copiati in {out_dir}.")
+
+# ---------------- Selenium driver setup ----------------
+def create_driver(use_profile=None, headless=False):
+    """
+    Crea e ritorna (driver, wait). Se webdriver-manager è installato lo usa,
+    altrimenti richiede che chromedriver.exe sia presente nella cartella.
+    use_profile: percorso user-data-dir (opzionale). headless: bool.
+    """
+    opts = Options()
+    if headless:
+        # modern headless flag
+        opts.add_argument("--headless=new")
+    opts.add_argument("--start-maximized")
+    prefs = {
+        "download.default_directory": DOWNLOAD_DIR,
+        "download.prompt_for_download": False,
+        "download.directory_upgrade": True,
+        "plugins.always_open_pdf_externally": True
+    }
+    opts.add_experimental_option("prefs", prefs)
+
+    if use_profile:
+        opts.add_argument(f"--user-data-dir={use_profile}")
+
+    # prefer webdriver-manager if available
+    try:
+        if WEBDRIVER_MANAGER_AVAILABLE:
+            scrivi_log("ℹ️ webdriver-manager disponibile: userò ChromeDriverManager.")
+            service = Service(ChromeDriverManager().install())
+            driver = webdriver.Chrome(service=service, options=opts)
+
+        else:
+            # fallback: chromedriver.exe nella cartella di lavoro
+            chromedriver_path = os.path.join(os.getcwd(), "chromedriver.exe")
+            if not os.path.exists(chromedriver_path):
+                raise FileNotFoundError(f"chromedriver.exe non trovato in {chromedriver_path}. Installa webdriver-manager o posiziona chromedriver.")
+            service = Service(chromedriver_path)
+            driver = webdriver.Chrome(service=service, options=opts)
+        wait = WebDriverWait(driver, 20)
+        return driver, wait
+    except Exception as e:
+        scrivi_log(f"❌ Errore creando il driver: {e}")
+        raise
+
+# ---------------- Page scanning (web) ----------------
+def scan_page(driver, wait, url, profondita=0, max_prof=2):
+    """
+    Scansiona la pagina url:
+    - cerca link diretti a .pdf e bottoni 'Scarica' e li attiva
+    - entra in sottopagine (fino a max_prof)
+    Conta pdf principali (livello 0) e pdf trovati nelle sottopagine (livello>0)
+    """
+    global pdf_principali, pdf_sottopagine
+    if profondita > max_prof:
+        scrivi_log(f"🔚 Limite di profondità raggiunto ({profondita}).")
+        return
+
+    try:
+        driver.get(url)
+        time.sleep(2)
+        scrivi_log(f"🌐 Apertura pagina: {url} (livello {profondita})")
+    except Exception as e:
+        scrivi_log(f"⚠️ Errore caricando {url}: {e}")
+        return
+
+    # cerca iframe e prova a cercare anche al suo interno
+    # (la funzione clickerà bottoni trovati nella pagina principale e sugli iframe)
+    try:
+        elementi_pdf = driver.find_elements(
+            By.XPATH,
+            "//a[contains(@href, '.pdf')] | //button[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'scarica')] | //a[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'scarica')]"
+        )
+    except Exception as e:
+        elementi_pdf = []
+        scrivi_log(f"⚠️ Errore finding elements: {e}")
+
+    scrivi_log(f"🔎 Trovati {len(elementi_pdf)} elementi PDF/bottoni in questa pagina (livello {profondita}).")
+
+    for idx, elem in enumerate(elementi_pdf, start=1):
+        try:
+            href = elem.get_attribute("href")
+            if href and href.lower().endswith(".pdf"):
+                scrivi_log(f"[{idx}] 📎 Link diretto a PDF: {href}")
+                # apri in nuova scheda per permettere al browser di scaricare
+                driver.execute_script("window.open(arguments[0]);", href)
+                time.sleep(1.5)
+            else:
+                try:
+                    # scroll to element then click
+                    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", elem)
+                    elem.click()
+                    scrivi_log(f"[{idx}] 🖱️ Bottone/link cliccato (potenziale download).")
+                    time.sleep(2)
+                except Exception as ex:
+                    scrivi_log(f"[{idx}] ⚠️ Errore cliccando elemento: {ex}")
+
+            # conta PDF come "trovato" (anche quando è bottone che avvia download)
+            if profondita == 0:
+                pdf_principali += 1
+            else:
+                pdf_sottopagine += 1
+
+        except Exception as e:
+            scrivi_log(f"[{idx}] ⚠️ Errore processando elemento: {e}")
+
+    # trova sottopagine cliccabili (parole comuni)
+    try:
+        sottopagine = driver.find_elements(
+            By.XPATH,
+            "//a[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'dettaglio')] | "
+            "//a[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'apri')] | "
+            "//a[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'visualizza')] | "
+            "//a[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'prescrizione')] | "
+            "//a[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'cartella')]"
+        )
+    except Exception as e:
+        sottopagine = []
+        scrivi_log(f"⚠️ Errore finding sottopagine: {e}")
+
+    scrivi_log(f"📂 Trovate {len(sottopagine)} sottopagine cliccabili (livello {profondita}).")
+
+    # per evitare cicli infiniti, memorizziamo href già visitati (semplice set)
+    visited = set()
+    for s in sottopagine:
+        try:
+            href = s.get_attribute("href")
+            if href:
+                if href in visited:
+                    scrivi_log(f"🔁 Sottopagina già visitata: {href}")
+                    continue
+                visited.add(href)
+                scrivi_log(f"➡️ Entrata in sottopagina: {href}")
+                # ricorsione su sottopagina
+                scan_page(driver, wait, href, profondita + 1, max_prof)
+                # torna indietro: driver.back() a volte non necessario dopo get()
+                try:
+                    driver.back()
+                except Exception:
+                    pass
+                time.sleep(1.5)
+            else:
+                # elemento senza href: prova a cliccarlo per aprire sottopagine dinamiche
+                try:
+                    s.click()
+                    scrivi_log("🖱️ Clic su sottopagina senza href (aperta dinamicamente).")
+                    time.sleep(1.5)
+                    # prova a scansionare la pagina attuale come sottopagina dinamica
+                    current_url = driver.current_url
+                    if current_url and current_url not in visited:
+                        visited.add(current_url)
+                        scan_page(driver, wait, current_url, profondita + 1, max_prof)
+                        try:
+                            driver.back()
+                        except Exception:
+                            pass
+                except Exception as ex:
+                    scrivi_log(f"⚠️ Errore cliccando sottopagina senza href: {ex}")
+        except Exception as e:
+            scrivi_log(f"⚠️ Errore elaborando sottopagina: {e}")
+
+# ---------------- Main ----------------
+def main():
+    global pdf_principali, pdf_sottopagine, pdf_local_principali, pdf_local_sottocartelle
+    start_time = time.time()
+    scrivi_log("=" * 100)
+    scrivi_log("🚀 Avvio script PDF Manager – input automatico (URL o cartella)")
+
+    path = input("👉 Inserisci un URL o il percorso di una cartella: ").strip()
+
+    # se è cartella locale esegui scansione locale (incluse sottocartelle)
+    if os.path.exists(path) and os.path.isdir(path):
+        scrivi_log(f"📁 Rilevato percorso locale: {path}")
+        scan_local_folder(path, DOWNLOAD_DIR)
+        scrivi_log("✅ Fine scansione cartella.")
+
+    # se è URL, procedi con Selenium + cookie handling
+    elif re.match(r"^https?://", path):
+        scrivi_log(f"🌐 Rilevato URL: {path}")
+
+        # crea driver (usa webdriver-manager se installato)
+        try:
+            driver, wait = create_driver()
+        except Exception as e:
+            scrivi_log(f"❌ Impossibile creare driver: {e}")
+            return
+
+        # tenta di caricare cookie salvati e aprire la pagina con sessione
+        if os.path.exists(COOKIES_FILE):
+            loaded = load_cookies(driver, path, COOKIES_FILE)
+            if loaded:
+                # ricarica la pagina con cookie impostati
+                try:
+                    driver.get(path)
+                    time.sleep(2)
+                    scrivi_log("🌐 Pagina aperta usando cookie salvati.")
+                except Exception as e:
+                    scrivi_log(f"⚠️ Errore ricaricando pagina dopo cookie: {e}")
+            else:
+                scrivi_log("ℹ️ Non sono riuscito a caricare cookie, aprirò la pagina per login manuale.")
+                driver.get(path)
+        else:
+            # primo avvio: apri pagina e chiedi all'utente di loggarsi manualmente
+            driver.get(path)
+            scrivi_log("🔐 Se il sito richiede autenticazione (es. SPID), effettua il login manuale nel browser visibile.")
+            input("Dopo aver effettuato il login e essere arrivato alla pagina principale, premi INVIO per salvare i cookie e proseguire...")
+            # salva cookie per i futuri run
+            save_cookies(driver, COOKIES_FILE)
+
+        # procedi con la scansione (fino a 2 livelli di default)
+        try:
+            scan_page(driver, wait, path, profondita=0, max_prof=2)
+        except Exception as e:
+            scrivi_log(f"⚠️ Errore durante scan_page: {e}")
+
+        scrivi_log(f"📂 I file scaricati/copiate si troveranno in: {DOWNLOAD_DIR}")
+
+        # chiudi il browser
+        try:
+            driver.quit()
+        except Exception:
+            pass
+
+    else:
+        scrivi_log("❌ Input non valido: inserisci un URL (http(s)://...) o un percorso di cartella esistente.")
+        return
+
+    # riepilogo finale e durata
+    durata = time.time() - start_time
+    minuti = int(durata // 60)
+    secondi = int(durata % 60)
+    scrivi_log("=" * 60)
+    scrivi_log("📊 RIEPILOGO FINALE")
+    scrivi_log(f"   🧭 File trovati sulla pagina principale: {pdf_principali}")
+    scrivi_log(f"   📂 File trovati nelle sottopagine: {pdf_sottopagine}")
+    scrivi_log(f"   📁 File trovati nella cartella (primo livello): {pdf_local_principali}")
+    scrivi_log(f"   📂 File trovati in sottocartelle locali: {pdf_local_sottocartelle}")
+    scrivi_log(f"   📈 Totale PDF trovati/copiate: {pdf_principali + pdf_sottopagine + pdf_local_principali + pdf_local_sottocartelle}")
+    scrivi_log(f"   ⏱ Durata esecuzione: {minuti}m {secondi}s")
+    scrivi_log("=" * 60)
+
+if __name__ == "__main__":
+    main()
+
