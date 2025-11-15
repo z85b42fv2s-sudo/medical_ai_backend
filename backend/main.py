@@ -69,6 +69,9 @@ from patient_profiles import (
 
 load_dotenv()
 
+# OpenAI model configuration
+DEFAULT_AI_MODEL = os.getenv("OPENAI_DEFAULT_MODEL", os.getenv("DEFAULT_ANALYSIS_MODEL", "gpt-4o-mini"))
+
 PENDING_DOWNLOADS: Dict[str, Dict[str, Any]] = {}
 
 app = FastAPI(title="Medical AI Backend", version="2.0")
@@ -86,16 +89,31 @@ def _remove_files_safely(paths: List[str]) -> None:
     for path in paths:
         _remove_file_safely(path)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
+# CORS configuration
+_cors_origins = os.getenv("CORS_ORIGINS", "").strip()
+if _cors_origins:
+    # Parse comma-separated list from environment
+    allowed_origins = [origin.strip() for origin in _cors_origins.split(",") if origin.strip()]
+else:
+    # Default: allow localhost and Railway domains
+    allowed_origins = [
         "null",
         "http://127.0.0.1",
         "http://127.0.0.1:5500",
         "http://localhost",
         "http://localhost:5500",
-    ],
-    allow_origin_regex=r"null|https?://(localhost|127\.0\.0\.1)(:\d+)?",
+    ]
+
+# Allow Railway preview and production domains
+_cors_regex = os.getenv(
+    "CORS_ORIGIN_REGEX",
+    r"null|https?://(localhost|127\.0\.0\.1)(:\d+)?|https?://.*\.railway\.app|https?://.*\.railway\.dev"
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_origin_regex=_cors_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -744,7 +762,7 @@ def analyze_patient(
 
     def run_analysis(path: str) -> Dict[str, Any]:
         return analyze_pdfs(
-            "gpt-5",
+            DEFAULT_AI_MODEL,
             path,
             use_ocr=use_ocr,
             ocr_lang=options.ocr_lang,
@@ -836,7 +854,7 @@ def ask_patient_ai(
         except Exception as exc:
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
     try:
-        answer = qa_on_results("gpt-5", body.question, patient_id=patient_id)
+        answer = qa_on_results(DEFAULT_AI_MODEL, body.question, patient_id=patient_id)
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
     return {"status": "success", "mode": mode, "question": body.question, "answer": answer}
