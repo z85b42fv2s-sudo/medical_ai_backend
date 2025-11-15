@@ -104,10 +104,10 @@ else:
         "http://localhost:5500",
     ]
 
-# Allow Railway preview and production domains
+# Allow Railway preview and production domains, plus Vercel domains
 _cors_regex = os.getenv(
     "CORS_ORIGIN_REGEX",
-    r"null|https?://(localhost|127\.0\.0\.1)(:\d+)?|https?://.*\.railway\.app|https?://.*\.railway\.dev"
+    r"null|https?://(localhost|127\.0\.0\.1)(:\d+)?|https?://.*\.railway\.app|https?://.*\.railway\.dev|https?://.*\.vercel\.app"
 )
 
 app.add_middleware(
