@@ -3,6 +3,8 @@
 // Backend URL: can be overridden via window.__BACKEND_URL__ (set in config.js or inline script)
 // Production backend on Railway
 const backendUrl = window.__BACKEND_URL__ || "https://medicalaibackend-production.up.railway.app";
+// Debug: log backend URL to console
+console.log("Backend URL configured:", backendUrl);
 const FSE_URL =
   "https://fascicolosanitario.sanita.finanze.it/FseInsAssistitoWeb/pages/includes/documentiHome.jsf?id=1";
 
@@ -279,6 +281,7 @@ async function fetchJson(path, options = {}) {
   }
   // Ensure we use the correct backend URL (fix for relative paths)
   const fullPath = path.startsWith("http") ? path : `${backendUrl}${path.startsWith("/") ? path : `/${path}`}`;
+  console.log("Fetching:", fullPath); // Debug log
   const response = await fetch(fullPath, opts);
   const text = await response.text();
   let data = {};
