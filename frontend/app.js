@@ -277,7 +277,9 @@ async function fetchJson(path, options = {}) {
   if (state.token && !("Authorization" in opts.headers)) {
     opts.headers.Authorization = `Bearer ${state.token}`;
   }
-  const response = await fetch(path, opts);
+  // Ensure we use the correct backend URL (fix for relative paths)
+  const fullPath = path.startsWith("http") ? path : `${backendUrl}${path.startsWith("/") ? path : `/${path}`}`;
+  const response = await fetch(fullPath, opts);
   const text = await response.text();
   let data = {};
   try {
