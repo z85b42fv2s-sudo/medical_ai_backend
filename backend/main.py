@@ -28,6 +28,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
 from . import document_repository, storage_service
+from .cad_generator import CADGenerationError, generate_cad_from_image
 from .storage_service import StorageServiceError
 from .email_service import send_signup_credentials, send_password_change_notification
 from pydantic import BaseModel, EmailStr, Field
@@ -248,6 +249,18 @@ def _build_storage_filename(original: str) -> str:
     timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
     suffix = secrets.token_hex(3)
     return f"{base}_{timestamp}_{suffix}{ext}"
+
+
+def _build_dxf_filename(original: Optional[str]) -> str:
+    base, _ = os.path.splitext((original or "disegno").strip() or "disegno")
+    safe_chars: List[str] = []
+    for ch in base:
+        if ch.isalnum() or ch in {"_", "-"}:
+            safe_chars.append(ch)
+        else:
+            safe_chars.append("-")
+    safe_base = "".join(safe_chars).strip("-_ ") or "disegno"
+    return f"{safe_base}.dxf"
 
 
 def _cleanup_pending_download(token: str) -> None:
@@ -1168,6 +1181,61 @@ def downloaded_pdfs_list() -> Dict[str, Any]:
         files.extend([os.path.basename(p) for p in glob.glob(os.path.join(download_dir, ext))])
     files = sorted(set(files))
     return {"files": files, "count": len(files), "folder": download_dir}
+
+
+@app.post("/cad/generate")
+async def generate_cad_from_raster(
+    file: UploadFile = File(...),
+    layer: str = Query("OUTLINE", description="Layer DXF dove inserire le polilinee"),
+    canny_threshold1: int = Query(50, ge=0, le=1000, description="Primo threshold per Canny"),
+    canny_threshold2: int = Query(150, ge=0, le=2000, description="Secondo threshold per Canny"),
+    approx_epsilon: float = Query(2.0, ge=0.1, le=50.0, description="Tolleranza di approssimazione contorni in pixel"),
+    session: Dict[str, str] = Depends(get_session_from_header),
+):
+    if not file:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Nessun file immagine fornito"
+        )
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File vuoto")
+
+    layer_name = (layer or "OUTLINE").strip() or "OUTLINE"
+
+    try:
+        result = generate_cad_from_image(
+            data,
+            layer=layer_name,
+            canny_threshold1=canny_threshold1,
+            canny_threshold2=canny_threshold2,
+            approx_epsilon=approx_epsilon,
+        )
+    except CADGenerationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    except Exception as exc:  # pragma: no cover - protezione generica
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Errore durante la generazione del DXF: {exc}",
+        )
+
+    download_name = _build_dxf_filename(file.filename)
+    headers = {
+        "X-Polylines-Count": str(len(result.polylines)),
+        "X-Layer-Name": layer_name,
+    }
+
+    requester = session.get("patient_id")
+    if requester:
+        headers["X-Requested-By"] = requester
+
+    return FileResponse(
+        result.path,
+        filename=download_name,
+        media_type="application/dxf",
+        background=BackgroundTask(_remove_file_safely, result.path),
+        headers=headers,
+    )
 
 
 @app.post("/public/signup", response_model=SignupResponse)
